@@ -88,7 +88,9 @@ describe("configureCoreTools", () => {
 
       const result = await handler(params);
 
-      expect(mockCoreApi.getProjects).toHaveBeenCalledWith("wellFormed", undefined, undefined, undefined, false);
+      // Auto-pagination: first call uses pageSize=100 and skip=0; result count < 100 so loop exits.
+      expect(mockCoreApi.getProjects).toHaveBeenCalledWith("wellFormed", 100, 0, undefined, false);
+      expect(mockCoreApi.getProjects).toHaveBeenCalledTimes(1);
 
       expect(result.content[0].text).toBe(
         JSON.stringify(
@@ -164,9 +166,10 @@ describe("configureCoreTools", () => {
 
       const result = await handler(params);
 
+      // Auto-pagination loop: null from API breaks the loop, returning an empty array.
       expect(mockCoreApi.getProjects).toHaveBeenCalled();
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toBe("No projects found");
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toBe("[]");
     });
 
     it("should handle unknown error type correctly", async () => {
@@ -234,7 +237,7 @@ describe("configureCoreTools", () => {
 
       const result = await handler(params);
 
-      expect(mockCoreApi.getProjects).toHaveBeenCalledWith("wellFormed", undefined, undefined, undefined, false);
+      expect(mockCoreApi.getProjects).toHaveBeenCalledWith("wellFormed", 100, 0, undefined, false);
 
       const filteredProjects = JSON.parse(result.content[0].text);
       expect(filteredProjects).toHaveLength(2);
@@ -279,6 +282,52 @@ describe("configureCoreTools", () => {
 
       const filteredProjects = JSON.parse(result.content[0].text);
       expect(filteredProjects).toHaveLength(2);
+    });
+
+    it("should auto-paginate across multiple pages when top is not specified", async () => {
+      configureCoreTools(server, tokenProvider, connectionProvider, userAgentProvider);
+
+      const call = (server.tool as jest.Mock).mock.calls.find(([toolName]) => toolName === "core_list_projects");
+      if (!call) throw new Error("core_list_projects tool not registered");
+      const [, , , handler] = call;
+
+      // Generate a full page of 100 projects and a partial second page of 3 projects.
+      const page1 = Array.from({ length: 100 }, (_, i) => ({ id: `id-${i}`, name: `Project-${i}` }));
+      const page2 = [
+        { id: "id-100", name: "Project-100" },
+        { id: "id-101", name: "Project-101" },
+        { id: "id-102", name: "Project-102" },
+      ];
+
+      (mockCoreApi.getProjects as jest.Mock).mockResolvedValueOnce(page1).mockResolvedValueOnce(page2);
+
+      const result = await handler({ stateFilter: "wellFormed", top: undefined, skip: undefined, continuationToken: undefined });
+
+      // First call: skip=0, second call: skip=100.
+      expect(mockCoreApi.getProjects).toHaveBeenCalledTimes(2);
+      expect(mockCoreApi.getProjects).toHaveBeenNthCalledWith(1, "wellFormed", 100, 0, undefined, false);
+      expect(mockCoreApi.getProjects).toHaveBeenNthCalledWith(2, "wellFormed", 100, 100, undefined, false);
+
+      const allProjects = JSON.parse(result.content[0].text);
+      expect(allProjects).toHaveLength(103);
+      expect(allProjects[0].name).toBe("Project-0");
+      expect(allProjects[102].name).toBe("Project-102");
+    });
+
+    it("should use a single call and respect caller-specified top for manual pagination", async () => {
+      configureCoreTools(server, tokenProvider, connectionProvider, userAgentProvider);
+
+      const call = (server.tool as jest.Mock).mock.calls.find(([toolName]) => toolName === "core_list_projects");
+      if (!call) throw new Error("core_list_projects tool not registered");
+      const [, , , handler] = call;
+
+      (mockCoreApi.getProjects as jest.Mock).mockResolvedValue([{ id: "id-0", name: "Project-0" }]);
+
+      await handler({ stateFilter: "wellFormed", top: 10, skip: 20, continuationToken: 30 });
+
+      // When top is explicitly set, exactly one call is made with caller's top/skip/continuationToken.
+      expect(mockCoreApi.getProjects).toHaveBeenCalledTimes(1);
+      expect(mockCoreApi.getProjects).toHaveBeenCalledWith("wellFormed", 10, 20, 30, false);
     });
   });
 
