@@ -18,6 +18,7 @@ import { configureAllTools } from "./tools.js";
 import { UserAgentComposer } from "./useragent.js";
 import { packageVersion } from "./version.js";
 import { DomainsManager } from "./shared/domains.js";
+import { parseAllowedTools, parseDeniedTools } from "./shared/tools-filter.js";
 
 function isGitHubCodespaceEnv(): boolean {
   return process.env.CODESPACES === "true" && !!process.env.CODESPACE_NAME;
@@ -80,6 +81,17 @@ const argv = yargs(hideBin(process.argv))
     type: "string",
     array: true,
   })
+  .option("tools", {
+    describe: "Tool(s) to enable: 'all' for everything, or specific tool names like 'core_list_projects repo_list_repos_by_project'. Defaults to 'all'.",
+    type: "string",
+    array: true,
+    default: "all",
+  })
+  .option("deny-tools", {
+    describe: "Tool(s) to deny regardless of --tools. Useful for disabling specific tools when --tools is set to 'all'.",
+    type: "string",
+    array: true,
+  })
   .check((argv) => {
     if (argv.transport === "stdio") {
       if (argv.port !== 3000) {
@@ -103,6 +115,9 @@ const orgUrl = "https://dev.azure.com/" + orgName;
 const domainsManager = new DomainsManager(argv.domains);
 export const enabledDomains = domainsManager.getEnabledDomains();
 
+export const allowedTools = parseAllowedTools(argv.tools);
+export const deniedTools = parseDeniedTools(argv["deny-tools"]);
+
 function getAzureDevOpsClient(getAzureDevOpsToken: () => Promise<string>, userAgentComposer: UserAgentComposer): () => Promise<WebApi> {
   return async () => {
     const accessToken = await getAzureDevOpsToken();
@@ -121,7 +136,7 @@ async function resolveAuthenticator(): Promise<() => Promise<string>> {
   return createAuthenticator(argv.authentication, tenantId);
 }
 
-function createMcpServer(authenticator: () => Promise<string>): McpServer {
+function createMcpServer(authenticator: () => Promise<string>, toolFilter: Set<string> | null = null, toolDenyList: Set<string> | null = null): McpServer {
   const server = new McpServer({
     name: "Azure DevOps MCP Server",
     version: packageVersion,
@@ -136,6 +151,22 @@ function createMcpServer(authenticator: () => Promise<string>): McpServer {
   server.server.oninitialized = () => {
     userAgentComposer.appendMcpClientInfo(server.server.getClientVersion());
   };
+
+  if (toolFilter !== null || toolDenyList !== null) {
+    const _originalTool = server.tool.bind(server);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (server as any).tool = (name: string, ...rest: unknown[]) => {
+      if (toolFilter !== null && !toolFilter.has(name)) {
+        logger.debug(`Skipping tool registration: ${name} (not in allowed tools list)`);
+        return undefined;
+      }
+      if (toolDenyList !== null && toolDenyList.has(name)) {
+        logger.debug(`Skipping tool registration: ${name} (in denied tools list)`);
+        return undefined;
+      }
+      return (_originalTool as (name: string, ...args: unknown[]) => unknown)(name, ...rest);
+    };
+  }
 
   // removing prompts until further notice
   // configurePrompts(server);
@@ -154,6 +185,8 @@ async function main() {
     transport: argv.transport,
     domains: argv.domains,
     enabledDomains: Array.from(enabledDomains),
+    tools: allowedTools !== null ? Array.from(allowedTools) : "all",
+    deniedTools: deniedTools !== null ? Array.from(deniedTools) : "none",
     version: packageVersion,
     isCodespace: isGitHubCodespaceEnv(),
   });
@@ -165,10 +198,10 @@ async function main() {
       port: argv.port as number,
       host: argv.host as string,
       allowedOrigins: (argv["allowed-origins"] as string[] | undefined) ?? [],
-      serverFactory: () => createMcpServer(authenticator),
+      serverFactory: () => createMcpServer(authenticator, allowedTools, deniedTools),
     });
   } else {
-    const server = createMcpServer(authenticator);
+    const server = createMcpServer(authenticator, allowedTools, deniedTools);
     const transport = new StdioServerTransport();
     await server.connect(transport);
   }
