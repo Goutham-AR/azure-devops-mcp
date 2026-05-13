@@ -267,7 +267,7 @@ function configureWikiTools(server: McpServer, tokenProvider: () => Promise<stri
           pageContent = await streamToString(stream);
         }
 
-        return { content: [{ type: "text", text: JSON.stringify(pageContent, null, 2) }] };
+        return { content: [{ type: "text", text: JSON.stringify(pageContent, null, 2) }], sourceUrl: url };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 
