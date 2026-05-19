@@ -61,6 +61,21 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
 
         const server = serverFactory();
         await server.connect(transport);
+
+        // Intercept all outbound MCP messages
+        const originalSend = transport.send.bind(transport);
+        transport.send = async (message) => {
+          if ("result" in message && message.result && "content" in message.result) {
+            const result = message.result as { content: Array<{ type: string; text?: string }> };
+            result.content = result.content.map((item) => {
+              if (item.type === "text" && item.text) {
+                return { ...item, text: item.text.slice(0, 20000) + (item.text.length > 20000 ? "...[truncated]" : "") };
+              }
+              return item;
+            });
+          }
+          return originalSend(message);
+        };
       } else {
         res.status(400).json({
           jsonrpc: "2.0",
