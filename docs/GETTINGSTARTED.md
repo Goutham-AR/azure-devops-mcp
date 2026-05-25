@@ -11,6 +11,7 @@ This guide will help you get started with the Azure DevOps MCP Server in differe
 - [Getting started with Cursor](#-using-mcp-server-with-cursor)
 - [Getting started with Opencode](#-using-mcp-server-with-opencode)
 - [Getting started with Kilocode](#-using-mcp-server-with-kilocode)
+- [Using HTTP Transport](#-using-http-transport)
 - [Optimizing Your Experience](#-optimizing-your-experience)
 
 ## 🕐 Prerequisites
@@ -408,3 +409,74 @@ Create `.kilocode/mcp.json` in your project root with the same content as above.
 Replace `<your-org>` with your Azure DevOps organization name. On first use, a browser window will open for Microsoft account login.
 
 For more on Kilocode MCP configuration, see the [Kilocode MCP docs](https://kilo.ai/docs/automate/mcp/using-in-kilo-code).
+
+## 🌐 Using HTTP Transport
+
+The Azure DevOps MCP Server supports HTTP transport in addition to the default stdio transport. HTTP transport enables remote deployment, multi-client access, and integration with browser-based or cloud-hosted MCP clients.
+
+### Starting the Server in HTTP Mode
+
+```bash
+# Basic HTTP server on localhost:3000
+mcp-server-azuredevops <your-org> --transport http
+
+# Custom port and host
+mcp-server-azuredevops <your-org> --transport http --port 8080 --host 127.0.0.1
+
+# With CORS origins for internal tools
+mcp-server-azuredevops <your-org> --transport http --port 3000 \
+  --allowed-origins http://internal-dashboard.corp:8080 http://copilot-host.corp
+```
+
+### HTTP Transport CLI Options
+
+| Option               | Default     | Description                                                          |
+| -------------------- | ----------- | -------------------------------------------------------------------- |
+| `--transport` / `-T` | `stdio`     | Transport type: `stdio` or `http`                                    |
+| `--port` / `-p`      | `3000`      | HTTP server port                                                     |
+| `--host` / `-H`      | `127.0.0.1` | HTTP server bind address                                             |
+| `--allowed-origins`  | _(none)_    | Allowed CORS origins. If omitted, cross-origin requests are blocked. |
+
+### Connecting MCP Clients to the HTTP Server
+
+Once the server is running in HTTP mode, configure your MCP client to connect to the HTTP endpoint:
+
+```json
+{
+  "servers": {
+    "ado-http": {
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
+    }
+  }
+}
+```
+
+### CORS and Origin Restriction
+
+For internal office deployments, use `--allowed-origins` to restrict which origins can make cross-origin requests:
+
+```bash
+mcp-server-azuredevops myorg --transport http \
+  --allowed-origins http://internal-app.corp:8080 http://dev-portal.corp
+```
+
+If `--allowed-origins` is not provided, all cross-origin requests are blocked by default. Same-origin requests (e.g., from `curl` or non-browser API clients) are always allowed regardless of the CORS setting.
+
+> **Security note:** Do not use `--host 0.0.0.0` to expose the server on all network interfaces without also setting `--allowed-origins`. The server defaults to `127.0.0.1` (localhost only) for safety.
+
+### Recommended Authentication for HTTP Mode
+
+When running as an HTTP server, the `interactive` authentication mode (browser-based OAuth) may not be practical for all scenarios. Recommended alternatives:
+
+- **`envvar`** — Set `ADO_MCP_AUTH_TOKEN` with a Personal Access Token:
+
+  ```bash
+  export ADO_MCP_AUTH_TOKEN="your-token"
+  mcp-server-azuredevops myorg --transport http --authentication envvar
+  ```
+
+- **`azcli`** — Use Azure CLI credentials (must be logged in via `az login`):
+  ```bash
+  mcp-server-azuredevops myorg --transport http --authentication azcli
+  ```

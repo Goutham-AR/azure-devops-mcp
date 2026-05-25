@@ -7,7 +7,7 @@ import { z } from "zod";
 import { searchIdentities } from "./auth.js";
 import { elicitProject } from "../shared/elicitations.js";
 
-import type { ProjectInfo } from "azure-devops-node-api/interfaces/CoreInterfaces.js";
+import type { TeamProjectReference } from "azure-devops-node-api/interfaces/CoreInterfaces.js";
 import { IdentityBase } from "azure-devops-node-api/interfaces/IdentitiesInterfaces.js";
 
 const CORE_TOOLS = {
@@ -16,7 +16,7 @@ const CORE_TOOLS = {
   get_identity_ids: "core_get_identity_ids",
 };
 
-function filterProjectsByName(projects: ProjectInfo[], projectNameFilter: string): ProjectInfo[] {
+function filterProjectsByName(projects: TeamProjectReference[], projectNameFilter: string): TeamProjectReference[] {
   const lowerCaseFilter = projectNameFilter.toLowerCase();
   return projects.filter((project) => project.name?.toLowerCase().includes(lowerCaseFilter));
 }
@@ -39,9 +39,47 @@ function configureCoreTools(server: McpServer, tokenProvider: () => Promise<stri
         let resolvedProject = project;
 
         if (!resolvedProject) {
-          const result = await elicitProject(server, connection, "Select the Azure DevOps project to list teams for.");
-          if ("response" in result) return result.response;
-          resolvedProject = result.resolved;
+          const allProjects: TeamProjectReference[] = [];
+          const pageSize = 100;
+          let elicitSkip = 0;
+          while (true) {
+            const page = await coreApi.getProjects("wellFormed", pageSize, elicitSkip, undefined, false);
+            if (!page || page.length === 0) break;
+            allProjects.push(...page);
+            if (page.length < pageSize) break;
+            elicitSkip += pageSize;
+          }
+          const projects = allProjects;
+
+          if (!projects || projects.length === 0) {
+            return { content: [{ type: "text", text: "No projects found to select from." }], isError: true };
+          }
+
+          const result = await server.server.elicitInput({
+            mode: "form",
+            message: "Select the Azure DevOps project to list teams for.",
+            requestedSchema: {
+              type: "object",
+              properties: {
+                project: {
+                  type: "string",
+                  title: "Project",
+                  description: "The Azure DevOps project to list teams for.",
+                  oneOf: projects.map((p) => ({
+                    const: p.name ?? p.id ?? "",
+                    title: p.name ?? p.id ?? "Unknown project",
+                  })),
+                },
+              },
+              required: ["project"],
+            },
+          });
+
+          if (result.action !== "accept" || !result.content?.project) {
+            return { content: [{ type: "text", text: "Project selection cancelled." }] };
+          }
+
+          resolvedProject = String(result.content.project);
         }
 
         const teams = await coreApi.getTeams(resolvedProject, mine, top, skip, false);
@@ -78,13 +116,32 @@ function configureCoreTools(server: McpServer, tokenProvider: () => Promise<stri
       try {
         const connection = await connectionProvider();
         const coreApi = await connection.getCoreApi();
-        const projects = await coreApi.getProjects(stateFilter, top, skip, continuationToken, false);
 
-        if (!projects) {
-          return { content: [{ type: "text", text: "No projects found" }], isError: true };
+        let result: TeamProjectReference[];
+
+        if (top !== undefined) {
+          // Caller explicitly set top — single call, they control pagination.
+          const page = await coreApi.getProjects(stateFilter, top, skip, continuationToken, false);
+          if (!page) {
+            return { content: [{ type: "text", text: "No projects found" }], isError: true };
+          }
+          result = page;
+        } else {
+          // Auto-paginate to return all available projects.
+          const pageSize = 100;
+          const allProjects: TeamProjectReference[] = [];
+          let currentSkip = skip ?? 0;
+          while (true) {
+            const page = await coreApi.getProjects(stateFilter, pageSize, currentSkip, undefined, false);
+            if (!page || page.length === 0) break;
+            allProjects.push(...page);
+            if (page.length < pageSize) break;
+            currentSkip += pageSize;
+          }
+          result = allProjects;
         }
 
-        const filteredProject = projectNameFilter ? filterProjectsByName(projects, projectNameFilter) : projects;
+        const filteredProject = projectNameFilter ? filterProjectsByName(result, projectNameFilter) : result;
 
         return {
           content: [{ type: "text", text: JSON.stringify(filteredProject, null, 2) }],

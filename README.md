@@ -1,9 +1,49 @@
 # ⭐ Azure DevOps MCP Server
 
-> [!IMPORTANT]
-> The Azure DevOps Remote MCP Server is now available in public preview for all organizations. We recommend migrating to the [Remote MCP Server](https://learn.microsoft.com/en-us/azure/devops/mcp-server/remote-mcp-server) going forward.
->
-> [Learn more](#-remote-mcp-server)
+## 🔀 Fork Differences
+
+This is a fork of the [official Microsoft Azure DevOps MCP Server](https://github.com/microsoft/azure-devops-mcp). The following capabilities have been added on top of the original:
+
+### HTTP Transport
+
+Run the server as an HTTP server instead of the default stdio process, suitable for deployment on a shared internal host and connecting multiple MCP clients simultaneously.
+
+```bash
+node dist/index.js <org> --transport http --port 3000 --host 127.0.0.1
+```
+
+| Option               | Description                                                                      | Default     |
+| -------------------- | -------------------------------------------------------------------------------- | ----------- |
+| `--transport` / `-T` | `stdio` or `http`                                                                | `stdio`     |
+| `--port` / `-p`      | HTTP server port (HTTP only)                                                     | `3000`      |
+| `--host` / `-H`      | Bind address (HTTP only)                                                         | `127.0.0.1` |
+| `--allowed-origins`  | CORS allowed origins (HTTP only) — blocks all cross-origin requests when omitted | —           |
+
+### Tool Allow-list (`--tools`)
+
+Register only a specific subset of tools when starting the server. Pass `all` (or omit) to register everything.
+
+```bash
+node dist/index.js <org> --tools core_list_projects repo_list_repos_by_project wit_get_work_item
+```
+
+### Tool Deny-list (`--deny-tools`)
+
+Block specific tools from being registered. Takes precedence over `--tools` when both are provided — useful for disabling individual tools while keeping everything else enabled.
+
+```bash
+# Block a single dangerous tool
+node dist/index.js <org> --deny-tools wiki_create_or_update_page
+
+# Combine with --tools: allow a broad set but carve out specific ones
+node dist/index.js <org> --domains work-items --deny-tools wit_create_work_item
+```
+
+### Project Listing Pagination Fix
+
+`core_list_projects` now automatically paginates through all pages of results when `--top` is not specified, so organizations with more than 100 projects visible to a service principal return the full list instead of only the first page.
+
+---
 
 Easily install the Azure DevOps MCP Server for VS Code or VS Code Insiders:
 

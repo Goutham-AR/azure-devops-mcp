@@ -12,6 +12,15 @@
       "transport": {
         "type": "stdio"
       }
+    },
+    {
+      "registryType": "npm",
+      "identifier": "@microsoft/azure-devops",
+      "version": "2.4.0",
+      "transport": {
+        "type": "http",
+        "url": "http://localhost:3000/mcp"
+      }
     }
   ],
   "repository": {
